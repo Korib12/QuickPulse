@@ -1,0 +1,776 @@
+import { useState, useEffect } from 'react';
+
+const rooms = {};
+const roomHistory = [];
+const classRoster = [];
+
+function generateStudentId() {
+  return Math.floor(1000 + Math.random() * 9000).toString();
+}
+
+function TeacherApp({ onBack }) {
+  const [view, setView] = useState('home');
+  const [currentRoom, setCurrentRoom] = useState(null);
+  const [results, setResults] = useState({ green: 0, yellow: 0, red: 0 });
+  const [topic, setTopic] = useState('');
+  const [history, setHistory] = useState([]);
+  const [refresh, setRefresh] = useState(0);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [respondedStudents, setRespondedStudents] = useState([]);
+  const [roster, setRoster] = useState([...classRoster]);
+  const [newStudentName, setNewStudentName] = useState('');
+  const [editingTopic, setEditingTopic] = useState(null);
+  const [deleteArchivedConfirm, setDeleteArchivedConfirm] = useState(null);
+  const [questions, setQuestions] = useState([]);
+
+  useEffect(() => {
+    const i = setInterval(() => {
+      setRefresh(r => r + 1);
+      if (view === 'history') {
+        setHistory([...roomHistory]);
+      }
+    }, 1000);
+    return () => clearInterval(i);
+  }, [view]);
+
+  useEffect(() => {
+    if (view === 'session' && currentRoom) {
+      const i = setInterval(() => {
+        setResults({ green: currentRoom.green, yellow: currentRoom.yellow, red: currentRoom.red });
+        setRespondedStudents([...currentRoom.respondedStudents]);
+        setQuestions([...(currentRoom.questions || [])]);
+      }, 500);
+      return () => clearInterval(i);
+    }
+  }, [view, currentRoom]);
+
+  const addStudent = () => {
+    if (!newStudentName.trim()) return;
+    const student = { name: newStudentName.trim(), id: generateStudentId() };
+    classRoster.push(student);
+    setRoster([...classRoster]);
+    setNewStudentName('');
+  };
+
+  const removeStudent = (id) => {
+    const idx = classRoster.findIndex(s => s.id === id);
+    if (idx > -1) {
+      classRoster.splice(idx, 1);
+      setRoster([...classRoster]);
+    }
+  };
+
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+  };
+
+  const createRoom = () => {
+    if (!topic.trim()) return;
+    const newRoom = { 
+      green: 0, yellow: 0, red: 0, 
+      topic: topic.trim(), 
+      published: false, 
+      students: classRoster.map(s => ({ name: s.name, id: s.id })), 
+      respondedStudents: [],
+      responses: {},
+      questions: [],
+      createdAt: new Date() 
+    };
+    const roomId = Date.now().toString();
+    rooms[roomId] = newRoom;
+    setCurrentRoom(newRoom);
+    setResults({ green: 0, yellow: 0, red: 0 });
+    setRespondedStudents([]);
+    setQuestions([]);
+    setTopic('');
+    setView('session');
+  };
+
+  const publishRoom = () => {
+    if (currentRoom) currentRoom.published = true;
+    setView('home');
+  };
+
+  const openRoom = (roomId) => {
+    setCurrentRoom(rooms[roomId]);
+    setResults({ green: rooms[roomId].green, yellow: rooms[roomId].yellow, red: rooms[roomId].red });
+    setRespondedStudents([...rooms[roomId].respondedStudents]);
+    setQuestions([...(rooms[roomId].questions || [])]);
+    setView('session');
+  };
+
+  const archiveSession = () => {
+    if (currentRoom) {
+      const total = currentRoom.green + currentRoom.yellow + currentRoom.red;
+      if (total > 0) {
+        roomHistory.unshift({
+          topic: currentRoom.topic,
+          results: { green: currentRoom.green, yellow: currentRoom.yellow, red: currentRoom.red },
+          total,
+          respondedStudents: [...currentRoom.respondedStudents],
+          responses: {...currentRoom.responses},
+          questions: [...(currentRoom.questions || [])],
+          archivedAt: new Date()
+        });
+      }
+      const roomId = Object.keys(rooms).find(id => rooms[id] === currentRoom);
+      if (roomId) delete rooms[roomId];
+    }
+    setView('home');
+  };
+
+  const resetVotes = () => {
+    if (currentRoom) {
+      currentRoom.green = 0;
+      currentRoom.yellow = 0;
+      currentRoom.red = 0;
+      currentRoom.respondedStudents = [];
+      currentRoom.responses = {};
+      currentRoom.questions = [];
+      setResults({ green: 0, yellow: 0, red: 0 });
+      setRespondedStudents([]);
+      setQuestions([]);
+    }
+  };
+
+  const updateTopic = (newTopic) => {
+    if (currentRoom && newTopic.trim()) {
+      currentRoom.topic = newTopic.trim();
+      setEditingTopic(null);
+    }
+  };
+
+  const confirmDel = () => {
+    if (deleteConfirm) {
+      delete rooms[deleteConfirm];
+    }
+    setDeleteConfirm(null);
+  };
+
+  const deleteArchivedSession = (index) => {
+    roomHistory.splice(index, 1);
+    setHistory([...roomHistory]);
+    setDeleteArchivedConfirm(null);
+    setRefresh(r => r + 1);
+  };
+
+  const total = results.green + results.yellow + results.red;
+  const pct = (v) => total === 0 ? 0 : Math.round((v / total) * 100);
+  const pctOf = (v, t) => t === 0 ? 0 : Math.round((v / t) * 100);
+  const activeRooms = Object.entries(rooms).map(([id, d]) => ({ 
+    id, topic: d.topic, total: d.green + d.yellow + d.red, 
+    published: d.published, sc: d.students.length, rc: d.respondedStudents.length 
+  }));
+
+  const bg = '#e8e4dc', card = '#fffcf5', border = '#d4cab8', text = '#4a4438', muted = '#7a7268';
+
+  if (view === 'home') {
+    return (
+      <div className="min-h-screen p-6" style={{ backgroundColor: bg }}>
+        {deleteConfirm && (
+          <div className="fixed inset-0 flex items-center justify-center z-50" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}>
+            <div className="rounded-2xl p-8 shadow-2xl max-w-sm mx-4" style={{ backgroundColor: card }}>
+              <h3 className="text-xl font-bold mb-2 text-center" style={{ color: text }}>Archive Session?</h3>
+              <p className="text-center mb-6" style={{ color: muted }}>This will move the session to Past Sessions.</p>
+              <div className="flex gap-3">
+                <button onClick={() => setDeleteConfirm(null)} className="flex-1 py-3 rounded-xl font-semibold" style={{ backgroundColor: '#e8e3da', color: text }}>Cancel</button>
+                <button onClick={confirmDel} className="flex-1 py-3 rounded-xl font-semibold" style={{ backgroundColor: '#d4a5a0', color: '#fff' }}>Archive</button>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="max-w-2xl mx-auto">
+          <div className="flex justify-between items-start mb-8">
+            <button onClick={onBack} className="px-4 py-2 rounded-lg" style={{ backgroundColor: border, color: text }}>← Back</button>
+            <div className="text-center">
+              <h1 className="text-3xl font-bold" style={{ color: text }}>Quick Pulse</h1>
+              <p className="text-sm" style={{ color: muted }}>Teacher Dashboard</p>
+            </div>
+            <div className="w-20"></div>
+          </div>
+          
+          <div className="rounded-2xl p-6 shadow-lg mb-6" style={{ backgroundColor: card }}>
+            <h2 className="text-lg font-semibold mb-4" style={{ color: text }}>Start New Session</h2>
+            <input 
+              type="text" 
+              placeholder="Enter topic (e.g., Photosynthesis)" 
+              value={topic} 
+              onChange={e => setTopic(e.target.value)} 
+              className="w-full py-3 px-4 rounded-xl mb-3 border"
+              style={{ backgroundColor: card, borderColor: border, color: text }} 
+            />
+            <button 
+              onClick={createRoom} 
+              disabled={!topic.trim()} 
+              className="w-full py-3 rounded-xl font-semibold shadow-md" 
+              style={{ backgroundColor: topic.trim() ? '#a8c5a0' : '#ccc', color: '#fff', opacity: topic.trim() ? 1 : 0.5 }}
+            >
+              Create Room
+            </button>
+          </div>
+
+          <div className="rounded-2xl p-6 shadow-lg mb-6" style={{ backgroundColor: card }}>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-lg font-semibold" style={{ color: text }}>Class Roster</h2>
+              <span className="text-sm" style={{ color: muted }}>({roster.length} students)</span>
+            </div>
+            <div className="flex gap-2 mb-4">
+              <input 
+                type="text" 
+                placeholder="Enter student name" 
+                value={newStudentName} 
+                onChange={e => setNewStudentName(e.target.value)}
+                onKeyPress={e => e.key === 'Enter' && addStudent()}
+                className="flex-1 py-2 px-4 rounded-lg border"
+                style={{ backgroundColor: card, borderColor: border, color: text }} 
+              />
+              <button 
+                onClick={addStudent}
+                className="px-6 py-2 rounded-lg font-semibold"
+                style={{ backgroundColor: '#f5e6d3', color: text }}
+              >
+                Add
+              </button>
+            </div>
+            <div className="space-y-2">
+              {roster.map(student => (
+                <div key={student.id} className="flex justify-between items-center p-3 rounded-lg" style={{ backgroundColor: '#f5f2eb' }}>
+                  <span style={{ color: text }}>{student.name}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm px-3 py-1 rounded" style={{ backgroundColor: '#e8e3da', color: muted }}>
+                      ID: {student.id}
+                    </span>
+                    <button 
+                      onClick={() => copyToClipboard(student.id)}
+                      className="text-sm px-3 py-1 rounded"
+                      style={{ backgroundColor: '#d4cab8', color: text }}
+                    >
+                      Copy
+                    </button>
+                    <button onClick={() => removeStudent(student.id)} style={{ color: '#9a5a52' }}>🗑</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {activeRooms.length > 0 && (
+            <div className="rounded-2xl p-6 shadow-lg mb-6" style={{ backgroundColor: card }}>
+              <h2 className="text-lg font-semibold mb-4" style={{ color: text }}>Active Sessions</h2>
+              {activeRooms.map(r => (
+                <div key={r.id} className="flex justify-between items-center p-4 rounded-xl mb-2" style={{ backgroundColor: '#f5f2eb' }}>
+                  <div className="cursor-pointer flex-1" onClick={() => openRoom(r.id)}>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold" style={{ color: text }}>{r.topic}</span>
+                      <span className="text-xs px-2 py-1 rounded-full" style={{ backgroundColor: r.published ? '#a8c5a0' : '#e5d19e', color: '#fff' }}>
+                        {r.published ? 'Live' : 'Draft'}
+                      </span>
+                    </div>
+                    <p className="text-sm" style={{ color: muted }}>{r.total} responses • {r.rc}/{r.sc} students</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {roomHistory.length > 0 && (
+            <div className="rounded-2xl p-6 shadow-lg" style={{ backgroundColor: card }}>
+              <button onClick={() => { setHistory([...roomHistory]); setView('history'); }} className="w-full py-3 rounded-xl font-semibold shadow-md" style={{ backgroundColor: border, color: text }}>
+                View Past Sessions ({roomHistory.length})
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'history') {
+    return (
+      <div className="min-h-screen p-6" style={{ backgroundColor: bg }}>
+        {deleteArchivedConfirm !== null && (
+          <div className="fixed inset-0 flex items-center justify-center z-50" style={{ backgroundColor: 'rgba(0,0,0,0.4)' }}>
+            <div className="rounded-2xl p-8 shadow-2xl max-w-sm mx-4" style={{ backgroundColor: card }}>
+              <h3 className="text-xl font-bold mb-2 text-center" style={{ color: text }}>Delete Permanently?</h3>
+              <p className="text-center mb-2" style={{ color: muted }}>
+                This will permanently delete this archived session.
+              </p>
+              <p className="text-center mb-6 font-semibold" style={{ color: '#9a5a52' }}>
+                This action cannot be undone!
+              </p>
+              <div className="flex gap-3">
+                <button onClick={() => setDeleteArchivedConfirm(null)} className="flex-1 py-3 rounded-xl font-semibold" style={{ backgroundColor: '#e8e3da', color: text }}>Cancel</button>
+                <button onClick={() => deleteArchivedSession(deleteArchivedConfirm)} className="flex-1 py-3 rounded-xl font-semibold" style={{ backgroundColor: '#d4a5a0', color: '#fff' }}>Delete Forever</button>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="max-w-2xl mx-auto">
+          <div className="flex justify-between items-center mb-8">
+            <button onClick={() => setView('home')} className="px-4 py-2 rounded-lg" style={{ backgroundColor: border, color: text }}>← Back</button>
+            <h1 className="text-2xl font-bold" style={{ color: text }}>Archived Sessions</h1>
+            <div className="w-20"></div>
+          </div>
+          {history.length === 0 ? (
+            <div className="rounded-2xl p-8 text-center" style={{ backgroundColor: card }}>
+              <p style={{ color: muted }}>No archived sessions yet</p>
+            </div>
+          ) : (
+            history.map((s, i) => (
+              <div key={i} className="rounded-2xl p-6 shadow-lg mb-4 relative" style={{ backgroundColor: card }}>
+                <button 
+                  onClick={() => setDeleteArchivedConfirm(i)}
+                  className="absolute top-4 right-4 p-2 rounded-lg hover:bg-red-100 transition-all"
+                  style={{ color: '#9a5a52' }}
+                  title="Delete permanently"
+                >
+                  🗑
+                </button>
+                <div className="mb-4 pr-8">
+                  <h3 className="font-bold text-lg" style={{ color: text }}>{s.topic}</h3>
+                  <p className="text-sm" style={{ color: muted }}>
+                    {new Date(s.archivedAt).toLocaleDateString()} • {s.total} responses • {s.respondedStudents.length} students
+                  </p>
+                </div>
+                <div className="flex gap-1 h-6 rounded-lg overflow-hidden mb-3" style={{ backgroundColor: '#e8e3da' }}>
+                  {pctOf(s.results.green, s.total) > 0 && <div style={{ width: pctOf(s.results.green, s.total) + '%', backgroundColor: '#a8c5a0' }}></div>}
+                  {pctOf(s.results.yellow, s.total) > 0 && <div style={{ width: pctOf(s.results.yellow, s.total) + '%', backgroundColor: '#e5d19e' }}></div>}
+                  {pctOf(s.results.red, s.total) > 0 && <div style={{ width: pctOf(s.results.red, s.total) + '%', backgroundColor: '#d4a5a0' }}></div>}
+                </div>
+                <div className="flex justify-between text-sm mb-4" style={{ color: muted }}>
+                  <span>✓ Ready: {s.results.green} ({pctOf(s.results.green, s.total)}%)</span>
+                  <span>◐ Example: {s.results.yellow} ({pctOf(s.results.yellow, s.total)}%)</span>
+                  <span>✗ Lost: {s.results.red} ({pctOf(s.results.red, s.total)}%)</span>
+                </div>
+                <details className="text-sm">
+                  <summary className="cursor-pointer font-medium mb-2" style={{ color: text }}>Student Responses</summary>
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    {s.respondedStudents.map((name, idx) => {
+                      const response = s.responses[name];
+                      const colors = { green: '#e8f5e6', yellow: '#fef9e6', red: '#f5e6e6' };
+                      return (
+                        <div key={idx} className="text-xs py-1 px-2 rounded" style={{ backgroundColor: colors[response] || '#f5f2eb', color: text }}>
+                          {name}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+                {s.questions && s.questions.length > 0 && (
+                  <details className="text-sm mt-3">
+                    <summary className="cursor-pointer font-medium mb-2" style={{ color: text }}>Student Questions ({s.questions.length})</summary>
+                    <div className="space-y-2 mt-2">
+                      {s.questions.map((q, idx) => (
+                        <div key={idx} className="p-2 rounded" style={{ backgroundColor: '#f5e6e6' }}>
+                          <p className="text-xs font-medium" style={{ color: '#9a5a52' }}>{q.student}</p>
+                          <p className="text-xs" style={{ color: text }}>{q.question}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'session') {
+    const students = currentRoom?.students || [];
+    const notResponded = students.filter(s => !respondedStudents.includes(s.name));
+    
+    return (
+      <div className="min-h-screen p-6" style={{ backgroundColor: bg }}>
+        <div className="max-w-2xl mx-auto">
+          <div className="flex justify-between items-center mb-8">
+            <button onClick={() => setView('home')} className="px-4 py-2 rounded-lg" style={{ backgroundColor: border, color: text }}>← Back</button>
+            <div className="flex gap-2">
+              <button onClick={archiveSession} className="px-4 py-2 rounded-lg" style={{ backgroundColor: '#d4a5a0', color: '#fff' }}>Archive Session</button>
+            </div>
+          </div>
+
+          <div className="rounded-2xl p-6 shadow-lg mb-6" style={{ backgroundColor: card }}>
+            <div className="text-center mb-6">
+              <div className="flex items-center justify-center gap-2 mb-2">
+                {editingTopic ? (
+                  <input 
+                    type="text"
+                    defaultValue={currentRoom?.topic}
+                    onBlur={e => updateTopic(e.target.value)}
+                    onKeyPress={e => e.key === 'Enter' && updateTopic(e.target.value)}
+                    autoFocus
+                    className="text-2xl font-bold text-center px-2 py-1 rounded border"
+                    style={{ color: text, borderColor: border }}
+                  />
+                ) : (
+                  <>
+                    <h2 className="text-2xl font-bold" style={{ color: text }}>{currentRoom?.topic}</h2>
+                    <button onClick={() => setEditingTopic(true)} className="text-sm" style={{ color: muted }}>✏️</button>
+                  </>
+                )}
+              </div>
+              <span className="text-xs px-3 py-1 rounded-full" style={{ backgroundColor: currentRoom?.published ? '#a8c5a0' : '#e5d19e', color: '#fff' }}>
+                {currentRoom?.published ? 'Live' : 'Draft'}
+              </span>
+              <p className="mt-2" style={{ color: muted }}>{total} responses</p>
+            </div>
+
+            {[['green', '✓ Ready for next topic', '#5a7a52', '#a8c5a0'], ['yellow', '◐ Need one more example', '#9a8040', '#e5d19e'], ['red', '✗ Completely lost', '#9a5a52', '#d4a5a0']].map(([k, l, c, b]) => (
+              <div key={k} className="mb-4">
+                <div className="flex justify-between mb-1"><span style={{ color: c }}>{l}</span><span style={{ color: c }}>{pct(results[k])}%</span></div>
+                <div className="h-8 rounded-full overflow-hidden" style={{ backgroundColor: '#e8e3da' }}>
+                  <div className="h-full rounded-full transition-all" style={{ width: pct(results[k]) + '%', backgroundColor: b }}></div>
+                </div>
+                <p className="text-sm text-right" style={{ color: muted }}>{results[k]} votes</p>
+              </div>
+            ))}
+            
+            <div className="flex gap-2 mt-6">
+              <button onClick={resetVotes} className="flex-1 py-2 rounded-xl font-semibold text-sm" style={{ backgroundColor: '#f5e6d3', color: text }}>
+                Reset Votes
+              </button>
+              {!currentRoom?.published && (
+                <button onClick={publishRoom} className="flex-1 py-2 rounded-xl font-semibold text-sm" style={{ backgroundColor: '#a8c5a0', color: '#fff' }}>
+                  Publish
+                </button>
+              )}
+            </div>
+          </div>
+
+          {students.length > 0 && (
+            <div className="rounded-2xl p-6 shadow-lg mb-6" style={{ backgroundColor: card }}>
+              <h3 className="font-semibold mb-4" style={{ color: text }}>Student Status ({respondedStudents.length}/{students.length})</h3>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm font-medium mb-2" style={{ color: '#5a7a52' }}>✓ Responded</p>
+                  {respondedStudents.length === 0 ? <p className="text-sm" style={{ color: muted }}>None yet</p> : respondedStudents.map((name, i) => <div key={i} className="text-sm py-1 px-2 rounded mb-1" style={{ backgroundColor: '#e8f5e6', color: '#5a7a52' }}>{name}</div>)}
+                </div>
+                <div>
+                  <p className="text-sm font-medium mb-2" style={{ color: '#9a5a52' }}>✗ Not responded</p>
+                  {notResponded.length === 0 ? <p className="text-sm" style={{ color: muted }}>All done!</p> : notResponded.map((s, i) => <div key={i} className="text-sm py-1 px-2 rounded mb-1" style={{ backgroundColor: '#f5e6e6', color: '#9a5a52' }}>{s.name}</div>)}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {questions.length > 0 && (
+            <div className="rounded-2xl p-6 shadow-lg mb-6" style={{ backgroundColor: card }}>
+              <h3 className="font-semibold mb-4" style={{ color: text }}>Questions Students Had ({questions.length})</h3>
+              <div className="space-y-3">
+                {questions.map((q, i) => (
+                  <div key={i} className="p-3 rounded-lg" style={{ backgroundColor: '#f5e6e6' }}>
+                    <p className="text-sm font-medium mb-1" style={{ color: '#9a5a52' }}>{q.student}</p>
+                    <p className="text-sm" style={{ color: text }}>{q.question}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function StudentApp({ onBack }) {
+  const [view, setView] = useState('home');
+  const [selectedRoom, setSelectedRoom] = useState(null);
+  const [rosterId, setRosterId] = useState('');
+  const [error, setError] = useState('');
+  const [voted, setVoted] = useState(false);
+  const [selectedVote, setSelectedVote] = useState(null);
+  const [alreadyVoted, setAlreadyVoted] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [studentName, setStudentName] = useState('');
+  const [showQuestionBox, setShowQuestionBox] = useState(false);
+  const [studentQuestion, setStudentQuestion] = useState('');
+
+  useEffect(() => {
+    const i = setInterval(() => setRefresh(r => r + 1), 1000);
+    return () => clearInterval(i);
+  }, []);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('quickpulse_roster_id');
+    if (saved) setRosterId(saved);
+  }, []);
+
+  const published = Object.entries(rooms).filter(([, d]) => d.published).map(([id, d]) => ({ id, topic: d.topic })).reverse();
+
+  const openJoinModal = (room) => {
+    setSelectedRoom(room);
+    setShowJoinModal(true);
+    setError('');
+  };
+
+  const joinSession = () => {
+    if (!rosterId.trim()) { setError('Please enter your Roster ID'); return; }
+    const student = classRoster.find(s => s.id === rosterId.trim());
+    if (!student) { setError('Invalid Roster ID'); return; }
+    
+    const room = rooms[selectedRoom.id];
+    if (!room) { setError('Room not found'); return; }
+    
+    localStorage.setItem('quickpulse_roster_id', rosterId.trim());
+    setStudentName(student.name);
+    
+    if (room.respondedStudents.includes(student.name)) {
+      setAlreadyVoted(true);
+      setShowJoinModal(false);
+      setView('vote');
+      return;
+    }
+    
+    if (room.students.length > 0 && !room.students.find(s => s.id === rosterId.trim())) {
+      setError('You are not in this class roster');
+      return;
+    }
+    
+    setShowJoinModal(false);
+    setAlreadyVoted(false);
+    setView('vote');
+  };
+
+  const submit = (type) => {
+    if (!alreadyVoted && selectedRoom) {
+      const student = classRoster.find(s => s.id === rosterId.trim());
+      const room = rooms[selectedRoom.id];
+      if (student && room) {
+        if (type === 'red') {
+          setShowQuestionBox(true);
+          return;
+        }
+        room[type]++;
+        room.respondedStudents.push(student.name);
+        room.responses[student.name] = type;
+        setSelectedVote(type);
+        setTimeout(() => setVoted(true), 1500);
+      }
+    }
+  };
+
+  const submitWithQuestion = () => {
+    if (selectedRoom) {
+      const student = classRoster.find(s => s.id === rosterId.trim());
+      const room = rooms[selectedRoom.id];
+      if (student && room) {
+        room.red++;
+        room.respondedStudents.push(student.name);
+        room.responses[student.name] = 'red';
+        if (studentQuestion.trim()) {
+          if (!room.questions) room.questions = [];
+          room.questions.push({
+            student: student.name,
+            question: studentQuestion.trim()
+          });
+        }
+        setSelectedVote('red');
+        setShowQuestionBox(false);
+        setTimeout(() => setVoted(true), 1500);
+      }
+    }
+  };
+
+  const bg = '#a8a49c', card = '#fffcf5', text = '#4a4438', muted = '#7a7268';
+
+  if (view === 'home') {
+    return (
+      <div className="min-h-screen p-6" style={{ backgroundColor: bg }}>
+        {showJoinModal && selectedRoom && (
+          <div className="fixed inset-0 flex items-center justify-center z-50" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+            <div className="rounded-2xl p-8 shadow-2xl max-w-md mx-4" style={{ backgroundColor: card }}>
+              <h3 className="text-xl font-bold mb-4 text-center" style={{ color: text }}>Join: {selectedRoom.topic}</h3>
+              <p className="text-sm mb-4 text-center" style={{ color: muted }}>Enter Your 4-digit Roster ID</p>
+              <input 
+                type="text" 
+                maxLength={4}
+                placeholder="Roster ID"
+                value={rosterId}
+                onChange={e => setRosterId(e.target.value.replace(/\D/g, ''))}
+                className="w-full py-3 px-4 rounded-xl text-center text-2xl tracking-widest mb-4 border"
+                style={{ backgroundColor: card, borderColor: '#d4cab8', color: text }}
+              />
+              {error && <p className="text-red-500 text-sm mb-3 text-center">{error}</p>}
+              <div className="flex gap-3">
+                <button onClick={() => { setShowJoinModal(false); setError(''); }} className="flex-1 py-3 rounded-xl font-semibold" style={{ backgroundColor: '#e8e3da', color: text }}>Cancel</button>
+                <button onClick={joinSession} disabled={rosterId.length !== 4} className="flex-1 py-3 rounded-xl font-semibold" style={{ backgroundColor: rosterId.length === 4 ? '#a8c5a0' : '#ccc', color: '#fff' }}>Join Session</button>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="max-w-md mx-auto">
+          <div className="flex justify-between items-center mb-8">
+            <button onClick={onBack} className="px-4 py-2 rounded-lg" style={{ backgroundColor: '#8a8680', color: '#fff' }}>← Back</button>
+            <div className="text-center">
+              <h1 className="text-3xl font-bold" style={{ color: '#fff' }}>Quick Pulse</h1>
+              <p className="text-sm" style={{ color: '#e8e3da' }}>Student Feedback</p>
+            </div>
+            <div className="w-16"></div>
+          </div>
+
+          {published.length > 0 ? (
+            <div className="rounded-2xl p-6 shadow-lg" style={{ backgroundColor: card }}>
+              <h2 className="text-lg font-semibold mb-4 text-center" style={{ color: text }}>Available Sessions</h2>
+              <div className="space-y-3">
+                {published.map(r => (
+                  <button
+                    key={r.id}
+                    onClick={() => openJoinModal(r)}
+                    className="w-full flex justify-between items-center p-4 rounded-xl"
+                    style={{ backgroundColor: '#f5f2eb', border: '1px solid #d4cab8' }}
+                  >
+                    <div className="text-left flex-1">
+                      <p className="font-semibold" style={{ color: text }}>{r.topic}</p>
+                    </div>
+                    <span className="text-xs px-3 py-1 rounded-full ml-3" style={{ backgroundColor: '#a8c5a0', color: '#fff' }}>Live</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl p-8 text-center" style={{ backgroundColor: card }}>
+              <p style={{ color: muted }}>No active sessions available</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'vote') {
+    if (alreadyVoted) {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-6" style={{ backgroundColor: bg }}>
+          <div className="rounded-2xl p-8 shadow-lg text-center max-w-md" style={{ backgroundColor: card }}>
+            <div className="text-6xl mb-4">🔒</div>
+            <h2 className="text-2xl font-bold mb-2" style={{ color: text }}>Already Voted</h2>
+            <p style={{ color: muted }}>You already submitted feedback for this session.</p>
+            <button onClick={() => { setView('home'); setAlreadyVoted(false); setSelectedRoom(null); }} className="mt-6 px-6 py-3 rounded-xl" style={{ backgroundColor: '#d4cab8', color: text }}>Back to Sessions</button>
+          </div>
+        </div>
+      );
+    }
+
+    if (voted) {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-6" style={{ backgroundColor: bg }}>
+          <div className="rounded-2xl p-8 shadow-lg text-center max-w-md" style={{ backgroundColor: card }}>
+            <div className="text-6xl mb-4">🙏</div>
+            <h2 className="text-2xl font-bold mb-2" style={{ color: text }}>Thanks for your feedback!</h2>
+            <p style={{ color: muted }}>Your response has been recorded.</p>
+            <button onClick={() => { setView('home'); setVoted(false); setSelectedRoom(null); setSelectedVote(null); }} className="mt-6 px-6 py-3 rounded-xl" style={{ backgroundColor: '#d4cab8', color: text }}>Back to Sessions</button>
+          </div>
+        </div>
+      );
+    }
+
+    const voteOptions = [
+      { key: 'green', label: 'Ready for next topic', icon: '✓', bg: '#a8c5a0', color: '#fff' },
+      { key: 'yellow', label: 'Need one more example', icon: '◐', bg: '#e5d19e', color: text },
+      { key: 'red', label: 'Completely lost', icon: '✗', bg: '#d4a5a0', color: '#fff' }
+    ];
+
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6" style={{ backgroundColor: bg }}>
+        <div className="rounded-2xl p-8 shadow-lg max-w-md w-full" style={{ backgroundColor: card }}>
+          {showQuestionBox ? (
+            <>
+              <div className="text-center mb-6">
+                <h2 className="text-2xl font-bold mb-2" style={{ color: text }}>We're here to help!</h2>
+                <p style={{ color: muted }}>What questions do you have?</p>
+              </div>
+              <textarea
+                value={studentQuestion}
+                onChange={e => setStudentQuestion(e.target.value)}
+                placeholder="Write your questions here..."
+                rows={5}
+                className="w-full py-3 px-4 rounded-xl mb-4 border-2 resize-none"
+                style={{ backgroundColor: card, borderColor: '#d4cab8', color: text }}
+              />
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => {
+                    setShowQuestionBox(false);
+                    setStudentQuestion('');
+                  }}
+                  className="flex-1 py-3 rounded-xl font-semibold"
+                  style={{ backgroundColor: '#e8e3da', color: text }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={submitWithQuestion}
+                  className="flex-1 py-3 rounded-xl font-semibold"
+                  style={{ backgroundColor: '#d4a5a0', color: '#fff' }}
+                >
+                  Submit
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-center mb-8">
+                <p className="text-sm mb-1" style={{ color: muted }}>{studentName}</p>
+                <h2 className="text-2xl font-bold mb-2" style={{ color: text }}>{selectedRoom?.topic}</h2>
+                <p style={{ color: muted }}>How do you feel about this topic?</p>
+              </div>
+              {selectedVote ? (
+                <div className="text-center py-8">
+                  <div className="text-6xl mb-4 animate-bounce">✓</div>
+                  <p className="text-lg font-semibold" style={{ color: text }}>Submitting your feedback...</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {voteOptions.map(option => (
+                    <button 
+                      key={option.key}
+                      onClick={() => submit(option.key)} 
+                      className="w-full py-4 rounded-xl font-semibold text-lg shadow-md flex items-center justify-center gap-3 transition-transform hover:scale-105" 
+                      style={{ backgroundColor: option.bg, color: option.color }}
+                    >
+                      <span className="text-2xl">{option.icon}</span> {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+export default function App() {
+  const [mode, setMode] = useState(null);
+
+  if (!mode) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6" style={{ backgroundColor: '#e8e4dc' }}>
+        <div className="w-full max-w-md">
+          <div className="text-center mb-10">
+            <h1 className="text-4xl font-bold mb-2" style={{ color: '#4a4438' }}>Quick Pulse</h1>
+            <p className="text-lg" style={{ color: '#7a7268' }}>Instant classroom feedback</p>
+          </div>
+          <div className="space-y-4">
+            <button onClick={() => setMode('teacher')} className="w-full py-6 rounded-2xl font-semibold text-xl shadow-lg transition-transform hover:scale-105" style={{ backgroundColor: '#fffcf5', color: '#4a4438', border: '2px solid #d4cab8' }}>
+              <div className="text-3xl mb-2">👩‍🏫</div>I'm a Teacher
+            </button>
+            <button onClick={() => setMode('student')} className="w-full py-6 rounded-2xl font-semibold text-xl shadow-lg transition-transform hover:scale-105" style={{ backgroundColor: '#fffcf5', color: '#4a4438', border: '2px solid #d4cab8' }}>
+              <div className="text-3xl mb-2">🎓</div>I'm a Student
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return mode === 'teacher' ? <TeacherApp onBack={() => setMode(null)} /> : <StudentApp onBack={() => setMode(null)} />;
+}
